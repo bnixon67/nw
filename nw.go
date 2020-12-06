@@ -10,7 +10,8 @@ import (
 	"os"
 )
 
-func start_receive(host, port, tempFileDir, tempFilePattern string) {
+// do_receive listens on the host and port for a file.
+func do_receive(host, port, tempFileDir, tempFilePattern string) {
 	var addr = host + ":" + port
 
 	log.Println("Listen", addr)
@@ -41,7 +42,8 @@ func start_receive(host, port, tempFileDir, tempFilePattern string) {
 	conn.Close()
 }
 
-func start_send(host, port, fileName string) {
+// do_send send a file via the host and port.
+func do_send(host, port, fileName string) {
 	var addr = host + ":" + port
 
 	log.Println("Dial", addr)
@@ -51,8 +53,20 @@ func start_send(host, port, fileName string) {
 	}
 	defer conn.Close()
 
-	log.Println("Start copy of", fileName)
-	written, err := io.Copy(conn, os.Stdin)
+	var file *os.File
+
+	if fileName == "" {
+		file = os.Stdin
+	} else {
+		file, err = os.Open(fileName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+	}
+
+	log.Println("Start copy of", file.Name())
+	written, err := io.Copy(conn, file)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,19 +88,12 @@ func main() {
 
 	flag.Parse()
 
-	/*
-		if flag.NArg() != 1 {
-			flag.Usage()
-			os.Exit(1)
-		}
-	*/
-
 	switch flag.Arg(0) {
 	case "receive":
-		start_receive(host, port, tempFileDir, tempFilePattern)
+		do_receive(host, port, tempFileDir, tempFilePattern)
 
 	case "send":
-		start_send(host, port, flag.Arg(1))
+		do_send(host, port, flag.Arg(1))
 
 	case "":
 		flag.Usage()
