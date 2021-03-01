@@ -21,30 +21,42 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"os"
 )
 
-// do_receive listens on the host and port for a file.
-func do_receive(host, port, fileName string, overwrite bool) {
-	var addr = host + ":" + port
-
-	// start server
-	log.Println("Listen", addr)
-	ln, err := net.Listen("tcp", addr)
+// checkClose will attempt to Close the given resource checking for any error
+// although it is unlikely there will be an error with Close, it doesn't hurt to check
+func checkClose(c io.Closer) {
+	err := c.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer ln.Close()
+}
+
+// receiveFile listens on the host and port for a file.
+func receiveFile(host, port, fileName string, overwrite bool) (written int64, err error) {
+	var addr = net.JoinHostPort(host, port)
+
+	log.SetPrefix(fmt.Sprintf("Recv(%d) ", os.Getpid()))
+	log.Println("Listening on", addr)
+
+	// start server
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Println(err)
+		return 0, err
+	}
+	defer checkClose(ln)
 
 	// accept connection
 	conn, err := ln.Accept()
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Connection accepted")
-	defer conn.Close()
+	defer checkClose(conn)
 
 	// create file or use stdout if no file specified
 	var file *os.File
@@ -56,42 +68,49 @@ func do_receive(host, port, fileName string, overwrite bool) {
 		if err == nil {
 			// file exists
 			if !overwrite {
-				log.Fatal("file exists and overwrite not set")
+				log.Printf("File %s exists and overwrite not set", fileName)
+				return 0, os.ErrExist
 			}
 		} else if os.IsNotExist(err) {
 			// file does not exist, so fall through
 		} else {
 			// undefined error
-			log.Fatal(err)
+			log.Println("undefined error:", err)
+			return 0, err
 		}
 
 		file, err = os.Create(fileName)
 		if err != nil {
-			log.Fatal(err)
+			log.Println("os.Create failed:", err)
+			return 0, err
 		}
 	}
 
-	log.Println("File", file.Name())
-
+	log.Println("Receive writing to", file.Name())
 	// copy everythin from connection to file
-	written, err := io.Copy(file, conn)
+	written, err = io.Copy(file, conn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Connection done, bytes received", written)
+	log.Printf("Received %d bytes", written)
+
+	return written, err
 }
 
-// do_send send a file via the host and port.
-func do_send(host, port, fileName string) {
+// sendFile send a file via the host and port.
+func sendFile(host, port, fileName string) (sent int64, err error) {
 	var addr = host + ":" + port
 
+	log.SetPrefix(fmt.Sprintf("Send(%d) ", os.Getpid()))
+
 	// dial server
-	log.Println("Dial", addr)
+	log.Println("Sending to", addr)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return 0, err
 	}
-	defer conn.Close()
+	defer checkClose(conn)
 
 	// open file or use stdin if no file specified
 	var file *os.File
@@ -100,22 +119,38 @@ func do_send(host, port, fileName string) {
 	} else {
 		file, err = os.Open(fileName)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return 0, err
 		}
-		defer file.Close()
+		defer checkClose(file)
 	}
 
 	// copy file to connection
-	log.Println("Start copy of", file.Name())
+	log.Println("Sending file", file.Name())
 	written, err := io.Copy(conn, file)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return written, err
 	}
-	log.Println("End copy, bytes written", written)
+	log.Printf("Sent %d bytes", written)
+
+	return written, err
 }
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	// define command-line flags
+	var (
+		host        string
+		port        string
+		overwrite   bool
+		logFileName string
+		logFileMode int
+	)
+	flag.StringVar(&host, "host", "localhost", "the host to send to or receive from")
+	flag.StringVar(&port, "port", "4200", "the port to send to or receive from")
+	flag.BoolVar(&overwrite, "overwrite", false, "overwrite existing file")
+	flag.StringVar(&logFileName, "logFileName", "", "the file name of the log file")
+	flag.IntVar(&logFileMode, "logFileMode", 0600, "the FileMode for the log file")
 
 	// customize Usage function for command-line parsing
 	flag.Usage = func() {
@@ -123,35 +158,49 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	// define command-line flags
-	var (
-		host      string
-		port      string
-		overwrite bool
-	)
-	flag.StringVar(&host, "host", "localhost", "the host to send to or receive from")
-	flag.StringVar(&port, "port", "4200", "the port to send to or receive from")
-	flag.BoolVar(&overwrite, "overwrite", false, "overwrite existing file")
-
 	// parse commandline flags
 	flag.Parse()
+
+	// setup logging
+	//log.SetFlags(log.LstdFlags | log.Lmsgprefix | log.Lshortfile)
+	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
+
+	// log to a file, if given
+	if logFileName != "" {
+		// append or create file for read-write
+		logFile, err := os.OpenFile(logFileName,
+			os.O_RDWR|os.O_CREATE|os.O_APPEND,
+			fs.FileMode(logFileMode))
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer checkClose(logFile)
+
+		log.SetOutput(logFile)
+	}
 
 	// determine mode to run, i.e. receive or send
 	switch flag.Arg(0) {
 	case "receive":
-		do_receive(host, port, flag.Arg(1), overwrite)
+		_, err := receiveFile(host, port, flag.Arg(1), overwrite)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Receive failed", err)
+			os.Exit(3)
+		}
 
 	case "send":
-		do_send(host, port, flag.Arg(1))
+		sendFile(host, port, flag.Arg(1))
 
 	case "":
 		flag.Usage()
-		fmt.Fprintln(flag.CommandLine.Output(), "Need to provide either send or receive")
+		fmt.Fprintln(flag.CommandLine.Output(),
+			"Need to provide either send or receive")
 		os.Exit(1)
 
 	default:
 		flag.Usage()
-		fmt.Fprintln(flag.CommandLine.Output(), "Invalid command, provide either send or receive")
+		fmt.Fprintln(flag.CommandLine.Output(),
+			"Invalid command, provide either send or receive")
 		os.Exit(2)
 	}
 
