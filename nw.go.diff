@@ -1,0 +1,82 @@
+diff --git a/nw.go b/nw.go
+index 5226bf2..6a00345 100644
+--- a/nw.go
++++ b/nw.go
+@@ -18,12 +18,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ package main
+ 
+ import (
++	"bytes"
+ 	"flag"
+ 	"fmt"
+ 	"io"
+ 	"log"
+ 	"net"
+ 	"os"
++	"path/filepath"
++	"strconv"
+ )
+ 
+ // do_receive listens on the host and port for a file.
+@@ -46,6 +49,29 @@ func do_receive(host, port, fileName string, overwrite bool) {
+ 	log.Println("Connection accepted")
+ 	defer conn.Close()
+ 
++	buf := new(bytes.Buffer)
++
++	b := make([]byte, 1, 1)
++
++	for {
++		_, err := conn.Read(b)
++		if err != nil {
++			log.Fatal(err)
++		}
++
++		if b[0] == '\n' {
++			break
++		}
++
++		n, err := buf.Write(b)
++		if err != nil {
++			log.Fatal(err)
++		}
++		fmt.Println("n=", n)
++
++	}
++	fmt.Println("FILE <" + buf.String() + ">")
++
+ 	// create file or use stdout if no file specified
+ 	var file *os.File
+ 	if fileName == "" {
+@@ -98,15 +124,19 @@ func do_send(host, port, fileName string) {
+ 	if fileName == "" {
+ 		file = os.Stdin
+ 	} else {
+-		file, err = os.Open(fileName)
++		file, err = os.Open(filepath.Clean(fileName))
+ 		if err != nil {
+ 			log.Fatal(err)
+ 		}
+ 		defer file.Close()
+ 	}
+ 
+-	// copy file to connection
+ 	log.Println("Start copy of", file.Name())
++
++	// write filename to connection
++	fmt.Fprintln(conn, filepath.Base(file.Name()))
++
++	// copy file to connection
+ 	written, err := io.Copy(conn, file)
+ 	if err != nil {
+ 		log.Fatal(err)
+@@ -115,7 +145,8 @@ func do_send(host, port, fileName string) {
+ }
+ 
+ func main() {
+-	log.SetFlags(log.LstdFlags | log.Lshortfile)
++	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmsgprefix)
++	log.SetPrefix("[" + strconv.Itoa(os.Getpid()) + "] ")
+ 
+ 	// customize Usage function for command-line parsing
+ 	flag.Usage = func() {
