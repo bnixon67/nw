@@ -56,7 +56,7 @@ func TestReceiveInvalidHost(t *testing.T) {
 }
 
 func TestReceiveInvalidPort(t *testing.T) {
-	_, err := receiveFile(host, "1", fileName, overwrite)
+	_, err := receiveFile(host, "a", fileName, overwrite)
 	if err == nil {
 		t.Errorf("Expected err, got <nil>")
 	}
