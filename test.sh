@@ -1,12 +1,22 @@
 SIZE=$((2**16+1))
 
+if ! [[ -x ./nw ]]
+then
+	echo "Executable does not exist. Building executable."
+	if ! go build
+	then
+		echo "Build failed!"
+		exit 1
+	fi
+fi
+
 # define log file
 LOG_FILE=test.log
 rm -f ${LOG_FILE}
 
 # temp files for send and receive
-SEND_FILE=$(mktemp)
-RECEIVE_FILE=$(mktemp)
+SEND_FILE=$(mktemp -t nw)
+RECEIVE_FILE=$(mktemp -t nw)
 
 # common args
 ARGS="-logFileName ${LOG_FILE} -host localhost"
@@ -27,12 +37,15 @@ sleep 0.1
 # wait for receive to finish
 wait ${WAIT_PID}
 
-# compare send and receive file
-ls -l ${SEND_FILE} ${RECEIVE_FILE}
-cmp ${SEND_FILE} ${RECEIVE_FILE}
-
 # show log
 cat ${LOG_FILE}
 
-# clean up
-rm ${SEND_FILE} ${RECEIVE_FILE}
+# compare send and receive file
+ls -l ${SEND_FILE} ${RECEIVE_FILE}
+if cmp -s ${SEND_FILE} ${RECEIVE_FILE}
+then
+	echo "Files matches"
+	rm ${SEND_FILE} ${RECEIVE_FILE}
+else
+	echo "Files not do match"
+fi
